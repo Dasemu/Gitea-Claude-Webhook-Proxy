@@ -10,6 +10,7 @@ const {
   ROUTINE_ID,
   ROUTINE_TOKEN,
   DEDUP_TTL_MS = String(5 * 60 * 1000),
+  FIRE_TIMEOUT_MS = String(10 * 1000),
 } = process.env;
 
 for (const [name, value] of Object.entries({
@@ -29,14 +30,16 @@ const ANTHROPIC_BETA_HEADER = 'experimental-cc-routine-2026-04-01';
 const ANTHROPIC_VERSION = '2023-06-01';
 const MAX_TEXT_LENGTH = 65536;
 const dedupTtlMs = Number(DEDUP_TTL_MS);
+const fireTimeoutMs = Number(FIRE_TIMEOUT_MS);
 
 const app = express();
 app.disable('x-powered-by');
 
 function log(level, fields) {
   const line = { level, timestamp: new Date().toISOString(), ...fields };
-  const out = level === 'error' ? console.error : console.log;
-  out(JSON.stringify(line));
+  // Todo por stdout a propósito: así un solo `tail`/log driver ve info y
+  // error juntos, sin depender de que algo separe stdout/stderr aguas abajo.
+  console.log(JSON.stringify(line));
 }
 
 // Constant-time string comparison. Returns false (without leaking length
@@ -141,6 +144,8 @@ function buildText(event, payload) {
 }
 
 async function fireRoutine(text, deliveryId, event) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), fireTimeoutMs);
   try {
     const res = await fetch(ANTHROPIC_FIRE_URL, {
       method: 'POST',
@@ -151,6 +156,7 @@ async function fireRoutine(text, deliveryId, event) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ text }),
+      signal: controller.signal,
     });
 
     if (res.ok) {
@@ -165,7 +171,10 @@ async function fireRoutine(text, deliveryId, event) {
     }
     log('error', fields);
   } catch (err) {
-    log('error', { deliveryId, event, result: 'fetch_failed', error: err.message });
+    const reason = err.name === 'AbortError' ? 'timeout' : err.message;
+    log('error', { deliveryId, event, result: 'fetch_failed', error: reason });
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
