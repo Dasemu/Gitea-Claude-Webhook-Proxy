@@ -1,66 +1,67 @@
 # Gitea-Claude-Webhook-Proxy
 
-Proxy en Node.js/Express que recibe webhooks de Gitea y los reenvía a la API
-de Claude Code Routines, añadiendo los headers que Gitea no permite
-configurar (`Authorization: Bearer <token>`, `anthropic-beta`,
+Node.js/Express proxy that receives Gitea webhooks and forwards them to the
+Claude Code Routines API, adding the headers Gitea can't be configured to
+send itself (`Authorization: Bearer <token>`, `anthropic-beta`,
 `anthropic-version`).
 
-## Cómo funciona
+## How it works
 
-1. Gitea hace `POST` a `/gitea-webhook` con:
-   - Header `Authorization: <secreto-A>` (configurado a mano en Gitea).
-   - Header `X-Gitea-Signature`: HMAC-SHA256 del body crudo con el `Secret`
-     del webhook.
-2. El proxy valida ambos (comparación constant-time) y responde 401 si no
-   coinciden.
-3. Deduplica por `X-Gitea-Delivery` (TTL configurable) para no reenviar
-   reintentos de Gitea.
-4. Construye un `text` legible a partir del payload (`push`, `pull_request`;
-   cualquier otro evento cae en un mensaje genérico) y responde `200` a
-   Gitea de inmediato.
-5. En segundo plano, hace `POST` a
+1. Gitea sends a `POST` to `/gitea-webhook` with:
+   - Header `Authorization: <secret-A>` (configured by hand in Gitea).
+   - Header `X-Gitea-Signature`: HMAC-SHA256 of the raw body using the
+     webhook's `Secret`.
+2. The proxy validates both (constant-time comparison) and returns 401 if
+   either one doesn't match.
+3. It deduplicates by `X-Gitea-Delivery` (configurable TTL) to avoid
+   reprocessing Gitea retries.
+4. It builds a readable `text` from the payload (`push`, `pull_request`;
+   any other event falls back to a generic message) and responds `200` to
+   Gitea immediately.
+5. In the background, it makes a `POST` to
    `https://api.anthropic.com/v1/claude_code/routines/{ROUTINE_ID}/fire`
-   con el `text` y loguea el resultado (éxito, 401/429/5xx, o fallo de red)
-   sin tumbar el proceso.
+   with that `text` and logs the outcome (success, 401/429/5xx, or a
+   network failure) without crashing the process.
 
-## Variables de entorno
+## Environment variables
 
-Ver [.env.example](.env.example). Copia el archivo y rellena los valores
-reales (no se suben al repo, `.env` está en `.gitignore`):
+See [.env.example](.env.example). Copy it and fill in the real values
+(never committed — `.env` is in `.gitignore`):
 
 ```bash
 cp .env.example .env
 ```
 
-| Variable | Descripción |
+| Variable | Description |
 | --- | --- |
-| `PORT` | Puerto donde escucha el proxy (por defecto `3000`). |
-| `GITEA_AUTH_HEADER` | Valor esperado del header `Authorization` que envía Gitea. |
-| `GITEA_WEBHOOK_SECRET` | Secret del webhook en Gitea, usado para verificar `X-Gitea-Signature`. |
-| `ROUTINE_ID` | ID de la rutina de Claude Code (`trig_...`). |
-| `ROUTINE_TOKEN` | Token de la rutina (`sk-ant-oat01-...`), se envía como `Bearer`. |
-| `DEDUP_TTL_MS` | TTL en ms para el dedup en memoria de entregas (por defecto 300000 = 5 min). |
+| `PORT` | Port the proxy listens on (defaults to `3000`). |
+| `GITEA_AUTH_HEADER` | Expected value of the `Authorization` header Gitea sends. |
+| `GITEA_WEBHOOK_SECRET` | Gitea webhook secret, used to verify `X-Gitea-Signature`. |
+| `ROUTINE_ID` | Claude Code routine ID (`trig_...`). |
+| `ROUTINE_TOKEN` | Routine token (`sk-ant-oat01-...`), sent as `Bearer`. |
+| `DEDUP_TTL_MS` | TTL in ms for the in-memory delivery dedup (defaults to 300000 = 5 min). |
+| `FIRE_TIMEOUT_MS` | Timeout in ms for the call to Anthropic's API (defaults to 10000). |
 
-## Ejecutar en local
+## Running locally
 
 ```bash
 npm install
-cp .env.example .env   # y rellena los valores reales
+cp .env.example .env   # then fill in the real values
 node server.js
 ```
 
-Endpoint de salud: `GET /health` → `{"status":"ok"}`.
+Health check endpoint: `GET /health` → `{"status":"ok"}`.
 
-## Configurar el webhook en Gitea
+## Configuring the webhook in Gitea
 
-En el repo/organización → Settings → Webhooks → Add webhook:
+On the repo/organization → Settings → Webhooks → Add webhook:
 
-- URL: `https://tu-dominio/gitea-webhook`
+- URL: `https://your-domain/gitea-webhook`
 - Content type: `application/json`
-- Secret: el mismo valor que `GITEA_WEBHOOK_SECRET`
-- Authorization header: el mismo valor que `GITEA_AUTH_HEADER`
-- Eventos: `Push` y/o `Pull Request` (los demás eventos se reenvían con un
-  mensaje genérico)
+- Secret: same value as `GITEA_WEBHOOK_SECRET`
+- Authorization header: same value as `GITEA_AUTH_HEADER`
+- Events: `Push` and/or `Pull Request` (any other event is forwarded with a
+  generic message)
 
 ## Docker
 
@@ -72,5 +73,5 @@ docker run -d --name gitea-claude-webhook-proxy \
   gitea-claude-webhook-proxy
 ```
 
-Pensado para ir detrás de un nginx existente haciendo `proxy_pass` hacia
+Meant to sit behind an existing nginx doing `proxy_pass` to
 `http://127.0.0.1:3000/gitea-webhook`.

@@ -20,7 +20,7 @@ for (const [name, value] of Object.entries({
   ROUTINE_TOKEN,
 })) {
   if (!value) {
-    console.error(JSON.stringify({ level: 'error', message: `Falta la variable de entorno ${name}` }));
+    console.error(JSON.stringify({ level: 'error', message: `Missing environment variable ${name}` }));
     process.exit(1);
   }
 }
@@ -37,8 +37,9 @@ app.disable('x-powered-by');
 
 function log(level, fields) {
   const line = { level, timestamp: new Date().toISOString(), ...fields };
-  // Todo por stdout a propósito: así un solo `tail`/log driver ve info y
-  // error juntos, sin depender de que algo separe stdout/stderr aguas abajo.
+  // Everything goes to stdout on purpose: a single tail/log driver then sees
+  // info and error together, instead of relying on something downstream to
+  // split stdout/stderr back apart.
   console.log(JSON.stringify(line));
 }
 
@@ -63,7 +64,7 @@ function verifyGiteaSignature(rawBody, signatureHeader) {
   return safeCompare(expected.toLowerCase(), String(signatureHeader).toLowerCase());
 }
 
-// Dedup de entregas de Gitea (por X-Gitea-Delivery) con TTL en memoria.
+// Dedup of Gitea deliveries (by X-Gitea-Delivery) with an in-memory TTL.
 const seenDeliveries = new Map();
 
 function isDuplicateDelivery(deliveryId) {
@@ -89,35 +90,35 @@ function truncate(text) {
 }
 
 function buildTextFromPush(payload) {
-  const repo = payload.repository?.full_name || 'repo desconocido';
-  const branch = (payload.ref || '').replace(/^refs\/heads\//, '') || 'rama desconocida';
-  const pusher = payload.pusher?.full_name || payload.pusher?.username || payload.sender?.login || 'alguien';
+  const repo = payload.repository?.full_name || 'unknown repo';
+  const branch = (payload.ref || '').replace(/^refs\/heads\//, '') || 'unknown branch';
+  const pusher = payload.pusher?.full_name || payload.pusher?.username || payload.sender?.login || 'someone';
   const commits = Array.isArray(payload.commits) ? payload.commits : [];
   const lastCommit = commits[commits.length - 1];
-  const message = lastCommit?.message?.split('\n')[0] || '(sin commits)';
+  const message = lastCommit?.message?.split('\n')[0] || '(no commits)';
   const compareUrl = payload.compare_url || payload.repository?.html_url || '';
 
   return [
-    `[${repo}] ${pusher} hizo push a "${branch}" (${commits.length} commit(s))`,
-    `Último commit: ${message}`,
-    compareUrl ? `Comparar: ${compareUrl}` : null,
+    `[${repo}] ${pusher} pushed to "${branch}" (${commits.length} commit(s))`,
+    `Latest commit: ${message}`,
+    compareUrl ? `Compare: ${compareUrl}` : null,
   ]
     .filter(Boolean)
     .join('\n');
 }
 
 function buildTextFromPullRequest(payload) {
-  const repo = payload.repository?.full_name || 'repo desconocido';
+  const repo = payload.repository?.full_name || 'unknown repo';
   const pr = payload.pull_request || {};
-  const action = payload.action || 'actualizado';
-  const author = pr.user?.login || pr.user?.full_name || 'alguien';
-  const title = pr.title || '(sin título)';
+  const action = payload.action || 'updated';
+  const author = pr.user?.login || pr.user?.full_name || 'someone';
+  const title = pr.title || '(no title)';
   const head = pr.head?.ref || '?';
   const base = pr.base?.ref || '?';
   const url = pr.html_url || payload.repository?.html_url || '';
 
   return [
-    `[${repo}] Pull request ${action} #${payload.number ?? pr.number ?? ''} por ${author}`,
+    `[${repo}] Pull request ${action} #${payload.number ?? pr.number ?? ''} by ${author}`,
     `${title}`,
     `${head} -> ${base}`,
     url ? `URL: ${url}` : null,
@@ -136,8 +137,8 @@ function buildText(event, payload) {
       text = buildTextFromPullRequest(payload);
       break;
     default: {
-      const repo = payload.repository?.full_name || 'repo desconocido';
-      text = `[${repo}] Evento de Gitea recibido: ${event}`;
+      const repo = payload.repository?.full_name || 'unknown repo';
+      text = `[${repo}] Gitea event received: ${event}`;
     }
   }
   return truncate(text);
@@ -230,5 +231,5 @@ app.use((err, req, res, next) => {
 
 const port = Number(PORT);
 app.listen(port, () => {
-  log('info', { message: `Servidor escuchando en el puerto ${port}` });
+  log('info', { message: `Server listening on port ${port}` });
 });
