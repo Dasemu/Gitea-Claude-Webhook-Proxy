@@ -11,6 +11,7 @@ const {
   ROUTINE_TOKEN,
   DEDUP_TTL_MS = String(5 * 60 * 1000),
   FIRE_TIMEOUT_MS = String(10 * 1000),
+  CLAUDE_GITEA_USERNAME = 'claude',
 } = process.env;
 
 for (const [name, value] of Object.entries({
@@ -127,6 +128,42 @@ function buildTextFromPullRequest(payload) {
     .join('\n');
 }
 
+// Gitea's X-Gitea-Event header only gives the coarse event ("issues",
+// "pull_request"); X-Gitea-Event-Type gives the precise sub-event. These are
+// the ones that mean "someone was (re-)assigned" and carry an assignees list
+// on the issue/pull_request. See https://docs.gitea.com/usage/repository/webhooks/
+const ASSIGN_EVENT_SUBJECT = {
+  issue_assign: 'issue',
+  pull_request_assign: 'pull_request',
+};
+
+function isAssignedTo(subject, username) {
+  if (!subject) return false;
+  const target = username.toLowerCase();
+  if (Array.isArray(subject.assignees) && subject.assignees.some((u) => u.login?.toLowerCase() === target)) {
+    return true;
+  }
+  return subject.assignee?.login?.toLowerCase() === target;
+}
+
+function buildTextFromAssignment(kind, payload) {
+  const repo = payload.repository?.full_name || 'unknown repo';
+  const subject = kind === 'issue' ? payload.issue : payload.pull_request;
+  const label = kind === 'issue' ? 'Issue' : 'Pull request';
+  const number = payload.number ?? subject?.number ?? '';
+  const title = subject?.title || '(no title)';
+  const url = subject?.html_url || payload.repository?.html_url || '';
+  const assigner = payload.sender?.login || 'someone';
+
+  return [
+    `[${repo}] ${label} #${number} assigned to ${CLAUDE_GITEA_USERNAME} by ${assigner}`,
+    `${title}`,
+    url ? `URL: ${url}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 function buildText(event, payload) {
   let text;
   switch (event) {
@@ -205,16 +242,29 @@ app.post(
   (req, res) => {
     const deliveryId = req.header('X-Gitea-Delivery') || null;
     const event = req.header('X-Gitea-Event') || 'unknown';
+    const eventType = req.header('X-Gitea-Event-Type') || event;
+    const payload = req.body || {};
 
     if (isDuplicateDelivery(deliveryId)) {
-      log('info', { deliveryId, event, result: 'duplicate_ignored' });
+      log('info', { deliveryId, event, eventType, result: 'duplicate_ignored' });
       return res.status(200).json({ status: 'duplicate_ignored' });
+    }
+
+    const assignSubjectKind = ASSIGN_EVENT_SUBJECT[eventType];
+    if (assignSubjectKind) {
+      const subject = assignSubjectKind === 'issue' ? payload.issue : payload.pull_request;
+      if (payload.action !== 'assigned' || !isAssignedTo(subject, CLAUDE_GITEA_USERNAME)) {
+        log('info', { deliveryId, event, eventType, result: 'ignored', reason: 'not_assigned_to_claude' });
+        return res.status(200).json({ status: 'ignored' });
+      }
     }
 
     res.status(200).json({ status: 'accepted' });
 
-    const text = buildText(event, req.body || {});
-    log('info', { deliveryId, event, result: 'accepted' });
+    const text = assignSubjectKind
+      ? buildTextFromAssignment(assignSubjectKind, payload)
+      : buildText(event, payload);
+    log('info', { deliveryId, event, eventType, result: 'accepted' });
     fireRoutine(text, deliveryId, event);
   }
 );

@@ -23,6 +23,21 @@ send itself (`Authorization: Bearer <token>`, `anthropic-beta`,
    with that `text` and logs the outcome (success, 401/429/5xx, or a
    network failure) without crashing the process.
 
+### Issue/PR assignment to Claude
+
+Gitea's coarse `X-Gitea-Event` header (`issues`, `pull_request`) doesn't say
+*what changed* — the precise sub-event is in `X-Gitea-Event-Type`. The proxy
+reads that header to detect `issue_assign` and `pull_request_assign`
+deliveries and only forwards them when the assignees list actually includes
+`CLAUDE_GITEA_USERNAME`; any other assignment change gets a `200 {"status":
+"ignored"}` without hitting the routine.
+
+**Known limitation:** Gitea (tested on 1.25.4) doesn't tell you *who* was
+just added to `assignees`, only the full current list. If Claude was already
+assigned and someone else gets added too, this still counts as "assigned to
+Claude" and fires again — telling the two apart would require comparing
+against the previous assignees, which Gitea doesn't send.
+
 ## Environment variables
 
 See [.env.example](.env.example). Copy it and fill in the real values
@@ -41,6 +56,7 @@ cp .env.example .env
 | `ROUTINE_TOKEN` | Routine token (`sk-ant-oat01-...`), sent as `Bearer`. |
 | `DEDUP_TTL_MS` | TTL in ms for the in-memory delivery dedup (defaults to 300000 = 5 min). |
 | `FIRE_TIMEOUT_MS` | Timeout in ms for the call to Anthropic's API (defaults to 10000). |
+| `CLAUDE_GITEA_USERNAME` | Gitea username to match on issue/PR assignment events (defaults to `claude`). |
 
 ## Running locally
 
@@ -60,8 +76,8 @@ On the repo/organization → Settings → Webhooks → Add webhook:
 - Content type: `application/json`
 - Secret: same value as `GITEA_WEBHOOK_SECRET`
 - Authorization header: same value as `GITEA_AUTH_HEADER`
-- Events: `Push` and/or `Pull Request` (any other event is forwarded with a
-  generic message)
+- Events: `Push`, `Issues` (at least "Assigned"), and/or `Pull Request` (at
+  least "Assigned") — any other event is forwarded with a generic message
 
 ## Docker
 
