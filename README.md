@@ -91,3 +91,7 @@ docker run -d --name gitea-claude-webhook-proxy \
 
 Meant to sit behind an existing nginx doing `proxy_pass` to
 `http://127.0.0.1:3000/gitea-webhook`.
+
+## License
+
+[GNU GPLv3](LICENSE) or later.

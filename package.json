@@ -1,9 +1,10 @@
 {
   "name": "gitea-claude-webhook-proxy",
   "version": "1.0.0",
-  "description": "Proxy que recibe webhooks de Gitea y los reenvía a la API de Claude Code Routines",
+  "description": "Proxy that receives Gitea webhooks and forwards them to the Claude Code Routines API",
   "main": "server.js",
   "type": "commonjs",
+  "license": "GPL-3.0-or-later",
   "engines": {
     "node": ">=18"
   },
