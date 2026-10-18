@@ -1,0 +1,82 @@
+name: Version bump
+
+on:
+  push:
+    branches: [development, main]
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    if: github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine bump type
+        id: bump
+        run: |
+          if [ "${{ github.ref_name }}" = "development" ]; then
+            echo "type=patch" >> "$GITHUB_OUTPUT"
+          else
+            # main: check whether every new commit vs. the previous main tip
+            # already exists on development (i.e. this came from an approved
+            # development -> main PR) rather than a direct hotfix push.
+            git fetch origin development --depth=50 || true
+            BEFORE="${{ github.event.before }}"
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+              NEW_COMMITS=$(git rev-list "$BEFORE"..HEAD)
+            else
+              NEW_COMMITS=$(git rev-list -1 HEAD)
+            fi
+            FROM_DEVELOPMENT=true
+            for c in $NEW_COMMITS; do
+              if ! git merge-base --is-ancestor "$c" origin/development 2>/dev/null; then
+                FROM_DEVELOPMENT=false
+                break
+              fi
+            done
+            if [ "$FROM_DEVELOPMENT" = "true" ] && [ -n "$NEW_COMMITS" ]; then
+              echo "type=minor" >> "$GITHUB_OUTPUT"
+            else
+              echo "type=patch" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Bump version
+        id: version
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          if [ "${{ steps.bump.outputs.type }}" = "minor" ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+          NEW="$MAJOR.$MINOR.$PATCH"
+          node -e "const fs=require('fs');const p=require('./package.json');p.version='$NEW';fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and tag
+        run: |
+          git add package.json
+          git commit -m "chore(release): v${{ steps.version.outputs.new }} [skip ci]"
+          git push origin HEAD:${{ github.ref_name }}
+
+      - name: Merge main back into development
+        if: github.ref_name == 'main'
+        run: |
+          git fetch origin development
+          git checkout development
+          git merge --no-edit origin/main
+          git push origin development
